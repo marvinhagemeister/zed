@@ -15,10 +15,14 @@ mod system_notifications;
 #[cfg(feature = "screen-capture")]
 mod screen_capture;
 
+#[cfg(any(test, feature = "test-support"))]
 mod metal_atlas;
+#[cfg(any(test, feature = "test-support"))]
+#[allow(dead_code)]
 pub mod metal_renderer;
+mod wgpu_renderer;
 
-use metal_renderer as renderer;
+use wgpu_renderer as renderer;
 
 #[cfg(feature = "font-kit")]
 mod open_type;

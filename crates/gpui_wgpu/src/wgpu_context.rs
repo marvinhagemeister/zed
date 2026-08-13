@@ -3,18 +3,21 @@ use anyhow::Context as _;
 #[cfg(not(target_family = "wasm"))]
 use gpui_util::ResultExt;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use wgpu::TextureFormat;
+
+static NEXT_DEVICE_EPOCH: AtomicU64 = AtomicU64::new(1);
 
 pub struct WgpuContext {
     pub instance: wgpu::Instance,
-    pub adapter: wgpu::Adapter,
+    pub adapter: Arc<wgpu::Adapter>,
     pub device: Arc<wgpu::Device>,
     pub queue: Arc<wgpu::Queue>,
     backend: WgpuBackend,
     dual_source_blending: bool,
     color_texture_format: wgpu::TextureFormat,
     device_lost: Arc<AtomicBool>,
+    application_context: Arc<gpui::GpuContext>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -128,16 +131,27 @@ impl WgpuContext {
             adapter.get_info().backend
         );
 
+        let adapter = Arc::new(adapter);
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
         let backend = WgpuBackend::Native(adapter.get_info().backend);
+        let application_context = Arc::new(gpui::GpuContext::new(
+            NEXT_DEVICE_EPOCH.fetch_add(1, Ordering::Relaxed),
+            Arc::new(instance.clone()),
+            Arc::clone(&adapter),
+            Arc::clone(&device),
+            Arc::clone(&queue),
+        ));
         Ok(Self {
             instance,
             adapter,
-            device: Arc::new(device),
-            queue: Arc::new(queue),
+            device,
+            queue,
             backend,
             dual_source_blending,
             color_texture_format,
             device_lost,
+            application_context,
         })
     }
 
@@ -220,15 +234,26 @@ impl WgpuContext {
             device.limits(),
         );
 
+        let adapter = Arc::new(adapter);
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
+        let application_context = Arc::new(gpui::GpuContext::new(
+            NEXT_DEVICE_EPOCH.fetch_add(1, Ordering::Relaxed),
+            Arc::new(instance.clone()),
+            Arc::clone(&adapter),
+            Arc::clone(&device),
+            Arc::clone(&queue),
+        ));
         let context = Self {
             instance,
             adapter,
-            device: Arc::new(device),
-            queue: Arc::new(queue),
+            device,
+            queue,
             backend,
             dual_source_blending,
             color_texture_format,
             device_lost,
+            application_context,
         };
         Ok(PreparedWebGraphics { context, surface })
     }
@@ -289,7 +314,7 @@ impl WgpuContext {
     #[cfg(not(target_family = "wasm"))]
     pub fn instance(display: Box<dyn wgpu::wgt::WgpuHasDisplayHandle>) -> wgpu::Instance {
         wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN | wgpu::Backends::GL,
+            backends: wgpu::Backends::PRIMARY | wgpu::Backends::GL,
             flags: wgpu::InstanceFlags::default(),
             backend_options: wgpu::BackendOptions::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
@@ -551,6 +576,11 @@ impl WgpuContext {
 
     pub fn color_texture_format(&self) -> wgpu::TextureFormat {
         self.color_texture_format
+    }
+
+    /// Returns the application-facing snapshot of this graphics device.
+    pub fn application_context(&self) -> Arc<gpui::GpuContext> {
+        Arc::clone(&self.application_context)
     }
 
     /// Returns true if the GPU device was lost (e.g., due to driver crash, suspend/resume).

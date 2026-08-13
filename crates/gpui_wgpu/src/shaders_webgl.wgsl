@@ -150,7 +150,7 @@ fn load_quad(instance_id: u32) -> Quad {
 }
 
 fn load_shadow(instance_id: u32) -> Shadow {
-    var cursor = instance_cursor(instance_id * 28u);
+    var cursor = instance_cursor(instance_id * 26u);
     return Shadow(
         read_word(&cursor),
         read_f32(&cursor),
@@ -217,5 +217,21 @@ fn load_poly_sprite(instance_id: u32) -> PolychromeSprite {
         read_bounds(&cursor),
         read_corners(&cursor),
         read_atlas_tile(&cursor),
+    );
+}
+
+fn load_gpu_image_sprite(instance_id: u32) -> GpuImageSprite {
+    var cursor = instance_cursor(instance_id * 28u);
+    return GpuImageSprite(
+        read_word(&cursor),
+        read_word(&cursor),
+        read_f32(&cursor),
+        read_word(&cursor),
+        read_bounds(&cursor),
+        read_bounds(&cursor),
+        read_corners(&cursor),
+        read_vec2_i32(&cursor),
+        read_vec2_i32(&cursor),
+        read_transformation(&cursor),
     );
 }

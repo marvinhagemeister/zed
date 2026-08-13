@@ -5,14 +5,16 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
-    Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
+    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, GpuImage,
+    GpuImageId, GpuImageSampling, Hsla, Pixels, Point, Radians, ScaledPixels, Size,
+    bounds_tree::BoundsTree, point,
 };
 use std::{
     fmt::Debug,
     iter::Peekable,
     ops::{Add, Range, Sub},
     slice,
+    sync::Arc,
 };
 
 #[allow(non_camel_case_types, unused)]
@@ -49,6 +51,7 @@ pub struct Scene {
     pub monochrome_sprites: Vec<MonochromeSprite>,
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
+    pub gpu_image_sprites: Vec<GpuImageSprite>,
     pub surfaces: Vec<PaintSurface>,
 }
 
@@ -65,6 +68,7 @@ impl Scene {
         self.monochrome_sprites.clear();
         self.subpixel_sprites.clear();
         self.polychrome_sprites.clear();
+        self.gpu_image_sprites.clear();
         self.surfaces.clear();
     }
 
@@ -129,6 +133,10 @@ impl Scene {
                 sprite.order = order;
                 self.polychrome_sprites.push(*sprite);
             }
+            Primitive::GpuImageSprite(sprite) => {
+                sprite.order = order;
+                self.gpu_image_sprites.push(sprite.clone());
+            }
             Primitive::Surface(surface) => {
                 surface.order = order;
                 self.surfaces.push(surface.clone());
@@ -159,6 +167,8 @@ impl Scene {
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
         self.polychrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
+        self.gpu_image_sprites
+            .sort_by_key(|sprite| (sprite.order, sprite.image.id()));
         self.surfaces.sort_by_key(|surface| surface.order);
     }
 
@@ -185,6 +195,8 @@ impl Scene {
             subpixel_sprites_iter: self.subpixel_sprites.iter().peekable(),
             polychrome_sprites_start: 0,
             polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
+            gpu_image_sprites_start: 0,
+            gpu_image_sprites_iter: self.gpu_image_sprites.iter().peekable(),
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
         }
@@ -208,6 +220,7 @@ pub(crate) enum PrimitiveKind {
     MonochromeSprite,
     SubpixelSprite,
     PolychromeSprite,
+    GpuImageSprite,
     Surface,
 }
 
@@ -227,6 +240,7 @@ pub enum Primitive {
     MonochromeSprite(MonochromeSprite),
     SubpixelSprite(SubpixelSprite),
     PolychromeSprite(PolychromeSprite),
+    GpuImageSprite(GpuImageSprite),
     Surface(PaintSurface),
 }
 
@@ -241,6 +255,7 @@ impl Primitive {
             Primitive::MonochromeSprite(sprite) => &sprite.bounds,
             Primitive::SubpixelSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
+            Primitive::GpuImageSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
         }
     }
@@ -254,6 +269,7 @@ impl Primitive {
             Primitive::MonochromeSprite(sprite) => &sprite.content_mask,
             Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
+            Primitive::GpuImageSprite(sprite) => &sprite.content_mask,
             Primitive::Surface(surface) => &surface.content_mask,
         }
     }
@@ -281,6 +297,8 @@ struct BatchIterator<'a> {
     subpixel_sprites_iter: Peekable<slice::Iter<'a, SubpixelSprite>>,
     polychrome_sprites_start: usize,
     polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
+    gpu_image_sprites_start: usize,
+    gpu_image_sprites_iter: Peekable<slice::Iter<'a, GpuImageSprite>>,
     surfaces_start: usize,
     surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
 }
@@ -311,6 +329,10 @@ impl<'a> Iterator for BatchIterator<'a> {
             (
                 self.polychrome_sprites_iter.peek().map(|s| s.order),
                 PrimitiveKind::PolychromeSprite,
+            ),
+            (
+                self.gpu_image_sprites_iter.peek().map(|s| s.order),
+                PrimitiveKind::GpuImageSprite,
             ),
             (
                 self.surfaces_iter.peek().map(|s| s.order),
@@ -447,6 +469,31 @@ impl<'a> Iterator for BatchIterator<'a> {
                     range: sprites_start..sprites_end,
                 })
             }
+            PrimitiveKind::GpuImageSprite => {
+                let first = self.gpu_image_sprites_iter.peek().unwrap();
+                let image_id = first.image.id();
+                let sampling = first.sampling;
+                let sprites_start = self.gpu_image_sprites_start;
+                let mut sprites_end = sprites_start + 1;
+                self.gpu_image_sprites_iter.next();
+                while self
+                    .gpu_image_sprites_iter
+                    .next_if(|sprite| {
+                        (sprite.order, batch_kind) < max_order_and_kind
+                            && sprite.image.id() == image_id
+                            && sprite.sampling == sampling
+                    })
+                    .is_some()
+                {
+                    sprites_end += 1;
+                }
+                self.gpu_image_sprites_start = sprites_end;
+                Some(PrimitiveBatch::GpuImageSprites {
+                    image_id,
+                    sampling,
+                    range: sprites_start..sprites_end,
+                })
+            }
             PrimitiveKind::Surface => {
                 let surfaces_start = self.surfaces_start;
                 let mut surfaces_end = surfaces_start + 1;
@@ -492,6 +539,11 @@ pub enum PrimitiveBatch {
         texture_id: AtlasTextureId,
         range: Range<usize>,
     },
+    GpuImageSprites {
+        image_id: GpuImageId,
+        sampling: GpuImageSampling,
+        range: Range<usize>,
+    },
     Surfaces(Range<usize>),
 }
 
@@ -524,6 +576,9 @@ impl PrimitiveBatch {
                     texture_id.index
                 )
             }
+            Self::GpuImageSprites {
+                image_id, range, ..
+            } => format!("GPU image sprites ({}) for {image_id:?}", range.len()),
             Self::Surfaces(range) => format!("surfaces ({})", range.len()),
         }
     }
@@ -760,6 +815,27 @@ pub struct PolychromeSprite {
 impl From<PolychromeSprite> for Primitive {
     fn from(sprite: PolychromeSprite) -> Self {
         Primitive::PolychromeSprite(sprite)
+    }
+}
+
+/// A directly sampled application-owned GPU image.
+#[derive(Clone, Debug)]
+#[expect(missing_docs)]
+pub struct GpuImageSprite {
+    pub order: DrawOrder,
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub corner_radii: Corners<ScaledPixels>,
+    pub source_bounds: Bounds<crate::DevicePixels>,
+    pub opacity: f32,
+    pub sampling: GpuImageSampling,
+    pub transformation: TransformationMatrix,
+    pub image: Arc<GpuImage>,
+}
+
+impl From<GpuImageSprite> for Primitive {
+    fn from(sprite: GpuImageSprite) -> Self {
+        Primitive::GpuImageSprite(sprite)
     }
 }
 

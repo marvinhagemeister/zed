@@ -913,6 +913,11 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn set_client_inset(&self, _inset: Pixels) {}
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 
+    /// Returns a snapshot of the wgpu device shared with GPUI's compositor.
+    fn gpu_context(&self) -> Option<Arc<crate::GpuContext>> {
+        None
+    }
+
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
 
     // Mobile platform methods.

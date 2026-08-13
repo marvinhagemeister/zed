@@ -26,6 +26,7 @@ pub(crate) use platform_scheduler::PlatformScheduler;
 mod geometry;
 mod gestures;
 mod global;
+mod gpu;
 mod input;
 mod inspector;
 mod interactive;
@@ -101,6 +102,7 @@ pub use executor::*;
 pub use geometry::*;
 pub use gestures::*;
 pub use global::*;
+pub use gpu::*;
 pub use gpui_macros::{
     AppContext, IntoElement, Render, VisualContext, bench, property_test, register_action, test,
 };

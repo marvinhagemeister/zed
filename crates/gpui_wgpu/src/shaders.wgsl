@@ -1312,6 +1312,67 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
 
 // --- surfaces --- //
 
+struct GpuImageSprite {
+    order: u32,
+    flags: u32,
+    opacity: f32,
+    pad: u32,
+    bounds: Bounds,
+    content_mask: Bounds,
+    corner_radii: Corners,
+    source_origin: vec2<i32>,
+    source_size: vec2<i32>,
+    transformation: TransformationMatrix,
+}
+
+struct GpuImageVarying {
+    @builtin(position) position: vec4<f32>,
+    @location(0) texture_position: vec2<f32>,
+    @location(1) @interpolate(flat) sprite_id: u32,
+    @location(2) clip_distances: vec4<f32>,
+    @location(3) local_position: vec2<f32>,
+}
+
+@vertex
+fn vs_gpu_image(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> GpuImageVarying {
+    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+    let sprite = load_gpu_image_sprite(instance_id);
+    let texture_size = vec2<f32>(textureDimensions(t_sprite, 0));
+
+    var out = GpuImageVarying();
+    out.position = to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
+    out.texture_position = (vec2<f32>(sprite.source_origin) + unit_vertex * vec2<f32>(sprite.source_size)) / texture_size;
+    out.sprite_id = instance_id;
+    out.clip_distances = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
+    out.local_position = unit_vertex * vec2<f32>(sprite.bounds.size) + sprite.bounds.origin;
+    return out;
+}
+
+@fragment
+fn fs_gpu_image(input: GpuImageVarying) -> @location(0) vec4<f32> {
+    let sprite = load_gpu_image_sprite(input.sprite_id);
+    var color = textureSample(t_sprite, s_sprite, input.texture_position);
+    if (any(input.clip_distances < vec4<f32>(0.0))) {
+        return vec4<f32>(0.0);
+    }
+
+    let distance = quad_sdf(input.local_position, sprite.bounds, sprite.corner_radii);
+    let coverage = sprite.opacity * saturate(0.5 - distance);
+    let alpha_mode = sprite.flags & 3u;
+    let color_encoding = (sprite.flags >> 2u) & 3u;
+    if (alpha_mode == 2u && color.a > 0.0) {
+        color = vec4<f32>(color.rgb / color.a, color.a);
+    } else if (alpha_mode == 0u) {
+        color.a = 1.0;
+    }
+    if (color_encoding != 2u) {
+        color = linear_to_srgba(color);
+    }
+    return blend_color(color, coverage);
+}
+
+// --- surfaces --- //
+
 struct SurfaceParams {
     bounds: Bounds,
     content_mask: Bounds,

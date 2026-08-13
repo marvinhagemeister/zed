@@ -2,8 +2,9 @@ use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext};
 use anyhow::{Context as _, Result};
 use bytemuck::{Pod, Zeroable};
 use gpui::{
-    AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, Path, Point, PrimitiveBatch,
-    ScaledPixels, Scene, Size, get_gamma_correction_ratios,
+    AtlasTextureId, Background, Bounds, Corners, DevicePixels, GpuDeviceEpoch, GpuImageAlphaMode,
+    GpuImageColorEncoding, GpuImageSampling, GpuSpecs, Path, Point, PrimitiveBatch, ScaledPixels,
+    Scene, Size, TransformationMatrix, get_gamma_correction_ratios,
 };
 use log::warn;
 #[cfg(not(target_family = "wasm"))]
@@ -109,6 +110,54 @@ struct PathRasterizationVertex {
     bounds: Bounds<ScaledPixels>,
 }
 
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct GpuImageSpriteInstance {
+    order: u32,
+    flags: u32,
+    opacity: f32,
+    pad: u32,
+    bounds: Bounds<ScaledPixels>,
+    content_mask: Bounds<ScaledPixels>,
+    corner_radii: Corners<ScaledPixels>,
+    source_origin: [i32; 2],
+    source_size: [i32; 2],
+    transformation: TransformationMatrix,
+}
+
+impl GpuImageSpriteInstance {
+    fn from_sprite(sprite: &gpui::GpuImageSprite) -> Self {
+        let alpha = match sprite.image.alpha_mode() {
+            GpuImageAlphaMode::Opaque => 0,
+            GpuImageAlphaMode::Straight => 1,
+            GpuImageAlphaMode::Premultiplied => 2,
+        };
+        let color = match sprite.image.color_encoding() {
+            GpuImageColorEncoding::SceneLinear => 0,
+            GpuImageColorEncoding::DisplayLinear => 1,
+            GpuImageColorEncoding::DisplayEncoded => 2,
+        };
+        Self {
+            order: sprite.order,
+            flags: alpha | color << 2,
+            opacity: sprite.opacity,
+            pad: 0,
+            bounds: sprite.bounds,
+            content_mask: sprite.content_mask.bounds,
+            corner_radii: sprite.corner_radii,
+            source_origin: [
+                sprite.source_bounds.origin.x.0,
+                sprite.source_bounds.origin.y.0,
+            ],
+            source_size: [
+                sprite.source_bounds.size.width.0,
+                sprite.source_bounds.size.height.0,
+            ],
+            transformation: sprite.transformation,
+        }
+    }
+}
+
 pub struct WgpuSurfaceConfig {
     pub size: Size<DevicePixels>,
     pub transparent: bool,
@@ -130,6 +179,7 @@ struct WgpuPipelines {
     mono_sprites: wgpu::RenderPipeline,
     subpixel_sprites: Option<wgpu::RenderPipeline>,
     poly_sprites: wgpu::RenderPipeline,
+    gpu_images: wgpu::RenderPipeline,
     #[allow(dead_code)]
     surfaces: wgpu::RenderPipeline,
 }
@@ -152,6 +202,7 @@ struct InstanceBindings {
     monochrome_sprites: InstanceBinding,
     subpixel_sprites: InstanceBinding,
     polychrome_sprites: InstanceBinding,
+    gpu_image_sprites: InstanceBinding,
 }
 
 struct WgpuBindGroupLayouts {
@@ -184,6 +235,7 @@ struct WgpuResources {
     pipelines: WgpuPipelines,
     bind_group_layouts: WgpuBindGroupLayouts,
     atlas_sampler: wgpu::Sampler,
+    nearest_sampler: wgpu::Sampler,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     path_globals_bind_group: wgpu::BindGroup,
@@ -229,6 +281,7 @@ pub struct WgpuRenderer {
     last_error: Arc<Mutex<Option<String>>>,
     failed_frame_count: u32,
     device_lost: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    device_epoch: GpuDeviceEpoch,
     surface_configured: bool,
     needs_redraw: bool,
 }
@@ -450,6 +503,12 @@ impl WgpuRenderer {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("gpu_image_nearest_sampler"),
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
 
         let uniform_alignment = device.limits().min_uniform_buffer_offset_alignment as u64;
         let globals_size = std::mem::size_of::<GlobalParams>() as u64;
@@ -568,6 +627,7 @@ impl WgpuRenderer {
             pipelines,
             bind_group_layouts,
             atlas_sampler,
+            nearest_sampler,
             globals_buffer,
             globals_bind_group,
             path_globals_bind_group,
@@ -602,6 +662,7 @@ impl WgpuRenderer {
             last_error,
             failed_frame_count: 0,
             device_lost: context.device_lost_flag(),
+            device_epoch: context.application_context().epoch(),
             surface_configured: true,
             needs_redraw: false,
         })
@@ -1041,6 +1102,19 @@ impl WgpuRenderer {
             &shader_module,
         );
 
+        let gpu_images = create_pipeline(
+            "gpu_images",
+            "vs_gpu_image",
+            "fs_gpu_image",
+            &layouts.globals,
+            &layouts.instances,
+            Some(&layouts.texture),
+            wgpu::PrimitiveTopology::TriangleStrip,
+            &[Some(color_target.clone())],
+            1,
+            &shader_module,
+        );
+
         let surfaces = create_pipeline(
             "surfaces",
             "vs_surface",
@@ -1063,6 +1137,7 @@ impl WgpuRenderer {
             mono_sprites,
             subpixel_sprites,
             poly_sprites,
+            gpu_images,
             surfaces,
         }
     }
@@ -1408,7 +1483,7 @@ impl WgpuRenderer {
             .write_instances(scene, &mut instance_offset)
             .with_context(|| {
                 format!(
-                    "scene too large: {} paths, {} shadows, {} quads, {} underlines, {} monochrome sprites, {} subpixel sprites, {} polychrome sprites",
+                    "scene too large: {} paths, {} shadows, {} quads, {} underlines, {} monochrome sprites, {} subpixel sprites, {} polychrome sprites, {} GPU image sprites",
                     scene.paths.len(),
                     scene.shadows.len(),
                     scene.quads.len(),
@@ -1416,6 +1491,7 @@ impl WgpuRenderer {
                     scene.monochrome_sprites.len(),
                     scene.subpixel_sprites.len(),
                     scene.polychrome_sprites.len(),
+                    scene.gpu_image_sprites.len(),
                 )
             })?;
 
@@ -1526,6 +1602,31 @@ impl WgpuRenderer {
                         instance_range(range),
                         &mut pass,
                     ),
+                    PrimitiveBatch::GpuImageSprites {
+                        image_id: _,
+                        sampling,
+                        range,
+                    } => {
+                        let Some(sprite) = scene.gpu_image_sprites.get(range.start) else {
+                            continue;
+                        };
+                        if sprite.image.epoch() != self.device_epoch {
+                            log::warn!(
+                                "ignoring GPU image from stale device epoch {} (active epoch {})",
+                                sprite.image.epoch().get(),
+                                self.device_epoch.get(),
+                            );
+                            continue;
+                        }
+                        self.draw_gpu_images(
+                            &instance_bindings.gpu_image_sprites,
+                            sprite.image.texture_view(),
+                            sampling,
+                            &self.resources().pipelines.gpu_images,
+                            instance_range(range),
+                            &mut pass,
+                        );
+                    }
                     // Surfaces are macOS-only for video playback and are not
                     // implemented by the WGPU renderer.
                     PrimitiveBatch::Surfaces(_surfaces) => {}
@@ -1575,6 +1676,18 @@ impl WgpuRenderer {
                 instance_offset,
                 &scene.polychrome_sprites,
             )?,
+            gpu_image_sprites: {
+                let instances = scene
+                    .gpu_image_sprites
+                    .iter()
+                    .map(GpuImageSpriteInstance::from_sprite)
+                    .collect::<Vec<_>>();
+                self.write_instance_binding(
+                    "gpu_image_sprites_bind_group",
+                    instance_offset,
+                    &instances,
+                )?
+            },
         })
     }
 
@@ -1637,6 +1750,50 @@ impl WgpuRenderer {
             self.create_texture_bind_group("atlas_texture_bind_group", &texture_info.view);
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &self.resources().globals_bind_group, &[]);
+        pass.set_bind_group(1, &sprite_instances.bind_group, &[]);
+        pass.set_bind_group(2, &texture, &[]);
+        pass.draw(
+            0..4,
+            sprite_instances.first_instance + range.start
+                ..sprite_instances.first_instance + range.end,
+        );
+    }
+
+    fn draw_gpu_images(
+        &self,
+        sprite_instances: &InstanceBinding,
+        texture_view: &wgpu::TextureView,
+        sampling: GpuImageSampling,
+        pipeline: &wgpu::RenderPipeline,
+        range: Range<u32>,
+        pass: &mut wgpu::RenderPass<'_>,
+    ) {
+        if range.is_empty() {
+            return;
+        }
+        let resources = self.resources();
+        let sampler = match sampling {
+            GpuImageSampling::Nearest => &resources.nearest_sampler,
+            GpuImageSampling::Linear => &resources.atlas_sampler,
+        };
+        let texture = resources
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("gpu_image_texture_bind_group"),
+                layout: &resources.bind_group_layouts.texture,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(texture_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                ],
+            });
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &resources.globals_bind_group, &[]);
         pass.set_bind_group(1, &sprite_instances.bind_group, &[]);
         pass.set_bind_group(2, &texture, &[]);
         pass.draw(
@@ -2239,5 +2396,6 @@ mod tests {
         assert_eq!(std::mem::size_of::<MonochromeSprite>(), 28 * 4);
         assert_eq!(std::mem::size_of::<SubpixelSprite>(), 28 * 4);
         assert_eq!(std::mem::size_of::<PolychromeSprite>(), 24 * 4);
+        assert_eq!(std::mem::size_of::<GpuImageSpriteInstance>(), 26 * 4);
     }
 }

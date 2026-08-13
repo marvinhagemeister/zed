@@ -732,6 +732,9 @@ impl MetalRenderer {
                     command_encoder,
                 ),
                 PrimitiveBatch::SubpixelSprites { .. } => unreachable!(),
+                PrimitiveBatch::GpuImageSprites { .. } => {
+                    log::warn!("direct GPU images are unavailable in the legacy headless renderer");
+                }
             }
         }
 

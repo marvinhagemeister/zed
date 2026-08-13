@@ -1924,6 +1924,17 @@ impl PlatformWindow for X11Window {
         self.0.state.borrow().renderer.gpu_specs().into()
     }
 
+    fn gpu_context(&self) -> Option<Arc<gpui::GpuContext>> {
+        let client = self.0.state.borrow().client.clone();
+        let context = client
+            .borrow()
+            .gpu_context
+            .borrow()
+            .as_ref()?
+            .application_context();
+        Some(context)
+    }
+
     fn play_system_bell(&self) {
         // Volume 0% means don't increase or decrease from system volume
         let _ = self.0.xcb.bell(0);

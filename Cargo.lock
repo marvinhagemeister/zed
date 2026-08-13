@@ -7910,6 +7910,7 @@ dependencies = [
  "waker-fn",
  "wasm-bindgen",
  "web-time",
+ "wgpu",
  "windows 0.61.3",
  "zed-font-kit",
  "zed-scap",
@@ -7993,6 +7994,7 @@ dependencies = [
  "futures 0.3.32",
  "gpui",
  "gpui_util",
+ "gpui_wgpu",
  "image",
  "itertools 0.14.0",
  "libc",
@@ -8012,6 +8014,7 @@ dependencies = [
  "smallvec",
  "strum 0.27.2",
  "uuid",
+ "wgpu",
  "zed-font-kit",
 ]
 

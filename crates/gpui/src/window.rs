@@ -5,20 +5,20 @@ use crate::{
     AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
     Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
-    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
-    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
-    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
-    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, profiler, px, rems, size,
-    transparent_black,
+    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuImage,
+    GpuImageSampling, GpuImageSprite, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
+    KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers,
+    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
+    SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
+    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
+    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point,
+    prelude::*, profiler, px, rems, size, transparent_black,
 };
 
 use anyhow::{Context as _, Result, anyhow};
@@ -4677,6 +4677,62 @@ impl Window {
         Ok(())
     }
 
+    /// Paints an application-owned GPU image without CPU readback or atlas upload.
+    ///
+    /// `source_bounds` is expressed in texture pixels. The image must belong
+    /// to the current graphics-device epoch.
+    pub fn paint_gpu_image(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        source_bounds: Bounds<DevicePixels>,
+        corner_radii: Corners<Pixels>,
+        image: Arc<GpuImage>,
+        sampling: GpuImageSampling,
+        transformation: TransformationMatrix,
+    ) -> Result<()> {
+        self.invalidator.debug_assert_paint();
+
+        let Some(context) = self.gpu_context() else {
+            anyhow::bail!("this platform does not expose a shared GPU context");
+        };
+        anyhow::ensure!(
+            image.epoch() == context.epoch(),
+            "GPU image belongs to device epoch {}, but the active epoch is {}",
+            image.epoch().get(),
+            context.epoch().get(),
+        );
+        anyhow::ensure!(
+            source_bounds.size.width.0 > 0 && source_bounds.size.height.0 > 0,
+            "GPU image source bounds must be non-empty",
+        );
+        anyhow::ensure!(
+            image.bounds().intersect(&source_bounds) == source_bounds,
+            "GPU image source bounds exceed the texture",
+        );
+        if bounds.size.width <= Pixels::ZERO || bounds.size.height <= Pixels::ZERO {
+            return Ok(());
+        }
+
+        let corner_radii = corner_radii
+            .clamp_radii_for_quad_size(bounds.size)
+            .scale(self.scale_factor());
+        let bounds = self.snap_bounds(bounds);
+        let content_mask = self.snapped_content_mask();
+        let opacity = self.element_opacity();
+        self.next_frame.scene.insert_primitive(GpuImageSprite {
+            order: 0,
+            bounds,
+            content_mask,
+            corner_radii,
+            source_bounds,
+            opacity,
+            sampling,
+            transformation,
+            image,
+        });
+        Ok(())
+    }
+
     /// Paint a surface into the scene for the next frame at the current z-index.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
@@ -6085,6 +6141,14 @@ impl Window {
     /// Currently returns None on Mac and Windows.
     pub fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.platform_window.gpu_specs()
+    }
+
+    /// Returns a snapshot of the wgpu device shared with GPUI's compositor.
+    ///
+    /// Resources created from this context are valid only for its device
+    /// epoch. Request a fresh snapshot after device-loss recovery.
+    pub fn gpu_context(&self) -> Option<Arc<crate::GpuContext>> {
+        self.platform_window.gpu_context()
     }
 
     /// Perform titlebar double-click action.

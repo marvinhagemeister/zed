@@ -1579,7 +1579,7 @@ impl PlatformWindow for MacWindow {
     }
 
     fn is_subpixel_rendering_supported(&self) -> bool {
-        false
+        self.0.lock().renderer.supports_dual_source_blending()
     }
 
     fn set_edited(&mut self, edited: bool) {
@@ -1765,7 +1765,11 @@ impl PlatformWindow for MacWindow {
     }
 
     fn gpu_specs(&self) -> Option<gpui::GpuSpecs> {
-        None
+        Some(self.0.lock().renderer.gpu_specs())
+    }
+
+    fn gpu_context(&self) -> Option<Arc<gpui::GpuContext>> {
+        self.0.lock().renderer.gpu_context()
     }
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {

@@ -1901,6 +1901,17 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().renderer.gpu_specs().into()
     }
 
+    fn gpu_context(&self) -> Option<Arc<gpui::GpuContext>> {
+        let client = self.borrow().client.get_client();
+        let context = client
+            .borrow()
+            .gpu_context
+            .borrow()
+            .as_ref()?
+            .application_context();
+        Some(context)
+    }
+
     fn play_system_bell(&self) {
         let state = self.borrow();
         let surface = if state.surface_state.toplevel().is_some() {
