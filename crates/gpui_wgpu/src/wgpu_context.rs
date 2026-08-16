@@ -275,6 +275,13 @@ impl WgpuContext {
             );
         }
 
+        // Applications sharing GPUI's device may need native format capabilities that are
+        // intentionally hidden by WebGPU's portable baseline. Enable the capabilities supported
+        // by this adapter so those applications can use renderable float and normalized textures.
+        required_features |= adapter.features()
+            & (wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+                | wgpu::Features::TEXTURE_FORMAT_16BIT_NORM);
+
         let color_atlas_texture_format = Self::select_color_texture_format(adapter)?;
         #[cfg(target_family = "wasm")]
         let required_limits = if adapter.get_info().backend == wgpu::Backend::Gl {

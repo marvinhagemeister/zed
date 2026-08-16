@@ -103,6 +103,16 @@ impl GpuContext {
             texture: Arc::new(self.device.create_texture(descriptor)),
         }
     }
+
+    /// Tags an existing texture from this context's device for direct scene composition.
+    ///
+    /// The caller must ensure that `texture` was created by [`Self::device`].
+    pub fn retain_texture(&self, texture: Arc<wgpu::Texture>) -> GpuTexture {
+        GpuTexture {
+            epoch: self.epoch,
+            texture,
+        }
+    }
 }
 
 impl std::fmt::Debug for GpuContext {

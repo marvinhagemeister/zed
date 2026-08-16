@@ -1925,8 +1925,9 @@ impl PlatformWindow for X11Window {
     }
 
     fn gpu_context(&self) -> Option<Arc<gpui::GpuContext>> {
-        let client = self.0.state.borrow().client.clone();
+        let client = self.0.state.borrow().client.get_client()?;
         let context = client
+            .0
             .borrow()
             .gpu_context
             .borrow()
