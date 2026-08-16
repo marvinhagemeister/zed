@@ -4692,6 +4692,7 @@ impl Window {
     ) -> Result<()> {
         self.paint_gpu_image_primitive(
             bounds,
+            bounds,
             source_bounds,
             corner_radii,
             image,
@@ -4716,11 +4717,37 @@ impl Window {
         transformation: TransformationMatrix,
         contrast_paths: Vec<GpuImageContrastPath>,
     ) -> Result<()> {
+        self.paint_gpu_image_contrast_paths_in_bounds(
+            bounds,
+            bounds,
+            source_bounds,
+            corner_radii,
+            image,
+            sampling,
+            transformation,
+            contrast_paths,
+        )
+    }
+
+    /// Paints contrast-aware vector paths over `paint_bounds`, sampling image luminance only
+    /// within `image_bounds`. Path pixels outside the image use a neutral light fallback.
+    pub fn paint_gpu_image_contrast_paths_in_bounds(
+        &mut self,
+        paint_bounds: Bounds<Pixels>,
+        image_bounds: Bounds<Pixels>,
+        source_bounds: Bounds<DevicePixels>,
+        corner_radii: Corners<Pixels>,
+        image: Arc<GpuImage>,
+        sampling: GpuImageSampling,
+        transformation: TransformationMatrix,
+        contrast_paths: Vec<GpuImageContrastPath>,
+    ) -> Result<()> {
         if contrast_paths.is_empty() {
             return Ok(());
         }
         self.paint_gpu_image_primitive(
-            bounds,
+            paint_bounds,
+            image_bounds,
             source_bounds,
             corner_radii,
             image,
@@ -4734,6 +4761,7 @@ impl Window {
     fn paint_gpu_image_primitive(
         &mut self,
         bounds: Bounds<Pixels>,
+        image_bounds: Bounds<Pixels>,
         source_bounds: Bounds<DevicePixels>,
         corner_radii: Corners<Pixels>,
         image: Arc<GpuImage>,
@@ -4788,6 +4816,7 @@ impl Window {
         self.next_frame.scene.insert_primitive(GpuImageSprite {
             order: 0,
             bounds,
+            image_bounds: self.snap_bounds(image_bounds),
             content_mask,
             corner_radii,
             source_bounds,

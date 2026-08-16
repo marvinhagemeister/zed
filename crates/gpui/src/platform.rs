@@ -2181,6 +2181,9 @@ impl From<&str> for PromptButton {
 /// The style of the cursor (pointer)
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum CursorStyle {
+    /// Hides the system cursor while the associated hitbox is active.
+    Hidden,
+
     /// The default cursor
     #[default]
     Arrow,

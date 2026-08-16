@@ -615,6 +615,10 @@ impl WaylandClientState {
         let Some(style) = self.cursor_style else {
             return;
         };
+        if style == CursorStyle::Hidden {
+            self.hide_cursor_until_mouse_moves();
+            return;
+        }
         let serial = self.serial_tracker.get(SerialKind::MouseEnter);
         if let Some(cursor_shape_device) = &self.cursor_shape_device {
             cursor_shape_device.set_shape(serial.as_raw(), to_shape(style));
@@ -1059,11 +1063,17 @@ impl LinuxClient for WaylandClient {
 
         state.cursor_style = Some(style);
 
-        // Don't clobber the invisible cursor; restore reads back from `cursor_style`.
-        if state.cursor_hidden_window.is_some() {
+        if style == CursorStyle::Hidden {
+            state.hide_cursor_until_mouse_moves();
             return;
         }
 
+        if state.cursor_hidden_window.is_some() {
+            state.restore_cursor_after_hide();
+            return;
+        }
+
+        // Don't clobber the invisible cursor; restore reads back from `cursor_style`.
         let serial = state.serial_tracker.get(SerialKind::MouseEnter);
         if let Some(cursor_shape_device) = &state.cursor_shape_device {
             cursor_shape_device.set_shape(serial.as_raw(), to_shape(style));

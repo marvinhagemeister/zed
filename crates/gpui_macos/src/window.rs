@@ -2138,6 +2138,33 @@ extern "C" fn reset_cursor_rects(this: &Object, _: Sel) {
         let cursor_style = window_state.lock().cursor_style;
 
         let cursor: id = match cursor_style {
+            CursorStyle::Hidden => {
+                let bitmap: id = msg_send![class!(NSBitmapImageRep), alloc];
+                let bitmap: id = msg_send![
+                    bitmap,
+                    initWithBitmapDataPlanes: nil
+                    pixelsWide: 1usize
+                    pixelsHigh: 1usize
+                    bitsPerSample: 8usize
+                    samplesPerPixel: 4usize
+                    hasAlpha: YES
+                    isPlanar: NO
+                    colorSpaceName: ns_string("NSDeviceRGBColorSpace")
+                    bitmapFormat: 0usize
+                    bytesPerRow: 4usize
+                    bitsPerPixel: 32usize
+                ];
+                let image: id = msg_send![class!(NSImage), alloc];
+                let image: id = msg_send![image, initWithSize: NSSize::new(1., 1.)];
+                let _: () = msg_send![image, addRepresentation: bitmap];
+                let _: () = msg_send![bitmap, release];
+                let cursor: id = msg_send![class!(NSCursor), alloc];
+                let cursor: id =
+                    msg_send![cursor, initWithImage: image hotSpot: NSPoint::new(0., 0.)];
+                let _: () = msg_send![image, release];
+                let cursor: id = msg_send![cursor, autorelease];
+                cursor
+            }
             CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
             CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
             CursorStyle::Crosshair => msg_send![class!(NSCursor), crosshairCursor],

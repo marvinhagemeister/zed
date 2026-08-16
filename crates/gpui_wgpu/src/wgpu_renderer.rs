@@ -111,6 +111,7 @@ struct GpuImageSpriteInstance {
     opacity: f32,
     pad: u32,
     bounds: Bounds<ScaledPixels>,
+    image_bounds: Bounds<ScaledPixels>,
     content_mask: Bounds<ScaledPixels>,
     corner_radii: Corners<ScaledPixels>,
     source_origin: [i32; 2],
@@ -163,6 +164,7 @@ impl GpuImageSpriteInstance {
             opacity: sprite.opacity,
             pad: 0,
             bounds: sprite.bounds,
+            image_bounds: sprite.image_bounds,
             content_mask: sprite.content_mask.bounds,
             corner_radii: sprite.corner_radii,
             source_origin: [
@@ -2452,6 +2454,6 @@ mod tests {
         assert_eq!(std::mem::size_of::<MonochromeSprite>(), 28 * 4);
         assert_eq!(std::mem::size_of::<SubpixelSprite>(), 28 * 4);
         assert_eq!(std::mem::size_of::<PolychromeSprite>(), 24 * 4);
-        assert_eq!(std::mem::size_of::<GpuImageSpriteInstance>(), 26 * 4);
+        assert_eq!(std::mem::size_of::<GpuImageSpriteInstance>(), 30 * 4);
     }
 }

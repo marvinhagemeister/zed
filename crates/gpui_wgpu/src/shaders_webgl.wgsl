@@ -229,6 +229,7 @@ fn load_gpu_image_sprite(instance_id: u32) -> GpuImageSprite {
         read_word(&cursor),
         read_bounds(&cursor),
         read_bounds(&cursor),
+        read_bounds(&cursor),
         read_corners(&cursor),
         read_vec2_i32(&cursor),
         read_vec2_i32(&cursor),

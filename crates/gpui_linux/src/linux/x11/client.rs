@@ -1686,11 +1686,17 @@ impl LinuxClient for X11Client {
 
         state.cursor_styles.insert(focused_window, style);
 
-        // Don't clobber the invisible cursor; restore reads back from `cursor_styles`.
-        if state.cursor_hidden_window == Some(focused_window) {
+        if style == CursorStyle::Hidden {
+            state.hide_cursor_until_mouse_moves();
             return;
         }
 
+        if state.cursor_hidden_window == Some(focused_window) {
+            state.restore_cursor_after_hide();
+            return;
+        }
+
+        // Don't clobber the invisible cursor; restore reads back from `cursor_styles`.
         let Some(cursor) = state.get_cursor_icon(style) else {
             return;
         };
@@ -2120,6 +2126,10 @@ impl X11ClientState {
             .get(&hidden_window)
             .copied()
             .unwrap_or(CursorStyle::Arrow);
+        if style == CursorStyle::Hidden {
+            self.hide_cursor_until_mouse_moves();
+            return;
+        }
         let Some(cursor) = self.get_cursor_icon(style) else {
             log::warn!(
                 "X11: no cursor icon available to restore {:?} after hide; cursor may stay invisible",

@@ -1320,6 +1320,7 @@ struct GpuImageSprite {
     opacity: f32,
     pad: u32,
     bounds: Bounds,
+    image_bounds: Bounds,
     content_mask: Bounds,
     corner_radii: Corners,
     source_origin: vec2<i32>,
@@ -1343,10 +1344,12 @@ fn vs_gpu_image(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) 
 
     var out = GpuImageVarying();
     out.position = to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
-    out.texture_position = (vec2<f32>(sprite.source_origin) + unit_vertex * vec2<f32>(sprite.source_size)) / texture_size;
+    let local_position = unit_vertex * vec2<f32>(sprite.bounds.size) + sprite.bounds.origin;
+    let image_position = (local_position - sprite.image_bounds.origin) / sprite.image_bounds.size;
+    out.texture_position = (vec2<f32>(sprite.source_origin) + image_position * vec2<f32>(sprite.source_size)) / texture_size;
     out.sprite_id = instance_id;
     out.clip_distances = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
-    out.local_position = unit_vertex * vec2<f32>(sprite.bounds.size) + sprite.bounds.origin;
+    out.local_position = local_position;
     return out;
 }
 
@@ -1377,7 +1380,10 @@ fn fs_gpu_image(input: GpuImageVarying) -> @location(0) vec4<f32> {
         let path_uv = input.position.xy / globals.viewport_size;
         let outline_coverage = textureSample(t_contrast_path, s_contrast_path, path_uv).a;
         let display_luminance = dot(srgb_to_linear(color.rgb), GRAYSCALE_FACTORS);
-        let contrast_color = select(vec3<f32>(1.0), vec3<f32>(0.0), display_luminance > 0.179);
+        let inside_image = all(input.local_position >= sprite.image_bounds.origin)
+            && all(input.local_position <= sprite.image_bounds.origin + sprite.image_bounds.size);
+        let sampled_contrast_color = select(vec3<f32>(1.0), vec3<f32>(0.0), display_luminance > 0.179);
+        let contrast_color = select(vec3<f32>(1.0), sampled_contrast_color, inside_image);
         if (contrast_path_only) {
             return blend_color(vec4<f32>(contrast_color, 1.0), coverage * outline_coverage);
         }

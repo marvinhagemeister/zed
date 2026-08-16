@@ -826,7 +826,10 @@ impl From<PolychromeSprite> for Primitive {
 #[expect(missing_docs)]
 pub struct GpuImageSprite {
     pub order: DrawOrder,
+    /// Bounds covered by this primitive.
     pub bounds: Bounds<ScaledPixels>,
+    /// Bounds that map the sampled image into the primitive.
+    pub image_bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub corner_radii: Corners<ScaledPixels>,
     pub source_bounds: Bounds<crate::DevicePixels>,
