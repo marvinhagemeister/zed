@@ -26,13 +26,6 @@ const STORAGE_BUFFER_SHADERS: &str = concat!(
     include_str!("shaders_storage.wgsl"),
 );
 
-/// Shader variant for WebGL2, which has no storage buffers: the shared shader
-/// logic plus the texture-based instance transport.
-const WEBGL_SHADERS: &str = concat!(
-    include_str!("shaders.wgsl"),
-    include_str!("shaders_webgl.wgsl"),
-);
-
 /// Subpixel text rendering requires dual-source blending, which WebGL2 lacks, so
 /// this variant only ever runs with the storage-buffer transport. The `enable`
 /// directive must precede all declarations.
@@ -123,6 +116,30 @@ struct GpuImageSpriteInstance {
     source_origin: [i32; 2],
     source_size: [i32; 2],
     transformation: TransformationMatrix,
+}
+
+fn webgl_shaders() -> String {
+    let words = |bytes: usize| bytes / std::mem::size_of::<u32>();
+    format!(
+        r#"{}
+const QUAD_WORDS: u32 = {}u;
+const SHADOW_WORDS: u32 = {}u;
+const PATH_SPRITE_WORDS: u32 = {}u;
+const UNDERLINE_WORDS: u32 = {}u;
+const MONOCHROME_SPRITE_WORDS: u32 = {}u;
+const POLYCHROME_SPRITE_WORDS: u32 = {}u;
+const GPU_IMAGE_SPRITE_WORDS: u32 = {}u;
+{}"#,
+        include_str!("shaders.wgsl"),
+        words(std::mem::size_of::<gpui::Quad>()),
+        words(std::mem::size_of::<gpui::Shadow>()),
+        words(std::mem::size_of::<PathSprite>()),
+        words(std::mem::size_of::<gpui::Underline>()),
+        words(std::mem::size_of::<gpui::MonochromeSprite>()),
+        words(std::mem::size_of::<gpui::PolychromeSprite>()),
+        words(std::mem::size_of::<GpuImageSpriteInstance>()),
+        include_str!("shaders_webgl.wgsl"),
+    )
 }
 
 impl GpuImageSpriteInstance {
@@ -871,8 +888,10 @@ impl WgpuRenderer {
         let dual_source_blending =
             dual_source_blending && device_has_feature && !uses_webgl_instance_data;
 
+        let webgl_shader_source;
         let shader_source = if uses_webgl_instance_data {
-            WEBGL_SHADERS
+            webgl_shader_source = webgl_shaders();
+            webgl_shader_source.as_str()
         } else {
             STORAGE_BUFFER_SHADERS
         };
@@ -2362,8 +2381,9 @@ mod tests {
 
     #[test]
     fn webgl_shader_is_valid_wgsl_without_storage_buffers() {
-        assert!(!WEBGL_SHADERS.contains("var<storage"));
-        validate_wgsl(WEBGL_SHADERS, naga::valid::Capabilities::empty());
+        let shaders = webgl_shaders();
+        assert!(!shaders.contains("var<storage"));
+        validate_wgsl(&shaders, naga::valid::Capabilities::empty());
     }
 
     #[test]
