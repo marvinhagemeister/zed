@@ -156,7 +156,10 @@ impl GpuImageSpriteInstance {
         };
         Self {
             order: sprite.order,
-            flags: alpha | color << 2,
+            flags: alpha
+                | color << 2
+                | u32::from(!sprite.contrast_paths.is_empty()) << 4
+                | u32::from(sprite.contrast_paths_only) << 5,
             opacity: sprite.opacity,
             pad: 0,
             bounds: sprite.bounds,
@@ -927,13 +930,13 @@ impl WgpuRenderer {
                                fs_entry: &str,
                                globals_layout: &wgpu::BindGroupLayout,
                                data_layout: &wgpu::BindGroupLayout,
-                               texture_layout: Option<&wgpu::BindGroupLayout>,
+                               texture_layouts: &[&wgpu::BindGroupLayout],
                                topology: wgpu::PrimitiveTopology,
                                color_targets: &[Option<wgpu::ColorTargetState>],
                                sample_count: u32,
                                module: &wgpu::ShaderModule| {
             let mut bind_group_layouts = vec![Some(globals_layout), Some(data_layout)];
-            bind_group_layouts.extend(texture_layout.map(Some));
+            bind_group_layouts.extend(texture_layouts.iter().copied().map(Some));
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(&format!("{name}_layout")),
                 bind_group_layouts: &bind_group_layouts,
@@ -981,7 +984,7 @@ impl WgpuRenderer {
             "fs_quad",
             &layouts.globals,
             &layouts.instances,
-            None,
+            &[],
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
             1,
@@ -994,7 +997,7 @@ impl WgpuRenderer {
             "fs_shadow",
             &layouts.globals,
             &layouts.instances,
-            None,
+            &[],
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
             1,
@@ -1007,7 +1010,7 @@ impl WgpuRenderer {
             "fs_path_rasterization",
             &layouts.globals,
             &layouts.instances,
-            None,
+            &[],
             wgpu::PrimitiveTopology::TriangleList,
             &[Some(wgpu::ColorTargetState {
                 format: surface_format,
@@ -1037,7 +1040,7 @@ impl WgpuRenderer {
             "fs_path",
             &layouts.globals,
             &layouts.instances,
-            Some(&layouts.texture),
+            &[&layouts.texture],
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(wgpu::ColorTargetState {
                 format: surface_format,
@@ -1054,7 +1057,7 @@ impl WgpuRenderer {
             "fs_underline",
             &layouts.globals,
             &layouts.instances,
-            None,
+            &[],
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
             1,
@@ -1067,7 +1070,7 @@ impl WgpuRenderer {
             "fs_mono_sprite",
             &layouts.globals,
             &layouts.instances,
-            Some(&layouts.texture),
+            &[&layouts.texture],
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
             1,
@@ -1094,7 +1097,7 @@ impl WgpuRenderer {
                 "fs_subpixel_sprite",
                 &layouts.globals,
                 &layouts.instances,
-                Some(&layouts.texture),
+                &[&layouts.texture],
                 wgpu::PrimitiveTopology::TriangleStrip,
                 &[Some(wgpu::ColorTargetState {
                     format: surface_format,
@@ -1114,7 +1117,7 @@ impl WgpuRenderer {
             "fs_poly_sprite",
             &layouts.globals,
             &layouts.instances,
-            Some(&layouts.texture),
+            &[&layouts.texture],
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
             1,
@@ -1127,7 +1130,7 @@ impl WgpuRenderer {
             "fs_gpu_image",
             &layouts.globals,
             &layouts.instances,
-            Some(&layouts.texture),
+            &[&layouts.texture, &layouts.texture],
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
             1,
@@ -1140,7 +1143,7 @@ impl WgpuRenderer {
             "fs_surface",
             &layouts.globals,
             &layouts.surfaces,
-            None,
+            &[],
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target)],
             1,
@@ -1637,6 +1640,31 @@ impl WgpuRenderer {
                             );
                             continue;
                         }
+                        if !sprite.contrast_paths.is_empty() {
+                            drop(pass);
+                            let rasterized = self.draw_paths_to_intermediate(
+                                &mut encoder,
+                                &sprite.contrast_paths,
+                                &mut instance_offset,
+                            )?;
+                            pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                label: Some("main_pass_after_gpu_image_contrast_paths"),
+                                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                    view: frame_view,
+                                    resolve_target: None,
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Load,
+                                        store: wgpu::StoreOp::Store,
+                                    },
+                                    depth_slice: None,
+                                })],
+                                depth_stencil_attachment: None,
+                                ..Default::default()
+                            });
+                            if !rasterized {
+                                continue;
+                            }
+                        }
                         self.draw_gpu_images(
                             &instance_bindings.gpu_image_sprites,
                             sprite.image.texture_view(),
@@ -1811,10 +1839,18 @@ impl WgpuRenderer {
                     },
                 ],
             });
+        let Some(path_intermediate_view) = resources.path_intermediate_view.as_ref() else {
+            return;
+        };
+        let contrast_path_texture = self.create_texture_bind_group(
+            "gpu_image_contrast_path_texture_bind_group",
+            path_intermediate_view,
+        );
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &resources.globals_bind_group, &[]);
         pass.set_bind_group(1, &sprite_instances.bind_group, &[]);
         pass.set_bind_group(2, &texture, &[]);
+        pass.set_bind_group(3, &contrast_path_texture, &[]);
         pass.draw(
             0..4,
             sprite_instances.first_instance + range.start

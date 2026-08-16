@@ -1,4 +1,4 @@
-use crate::{Bounds, DevicePixels, Size};
+use crate::{Bounds, DevicePixels, Path, Pixels, Size};
 use anyhow::{Result, bail};
 use std::sync::{
     Arc,
@@ -160,6 +160,19 @@ pub enum GpuImageSampling {
     Nearest,
     /// Bilinearly interpolate neighboring source texels.
     Linear,
+}
+
+/// A vector path whose coverage is composited in black or white over a GPU image.
+///
+/// The compositor chooses the higher-contrast color independently for every covered image
+/// pixel. Geometry stays application-defined; GPUI only supplies path rasterization and the
+/// image-aware compositing operation.
+#[derive(Clone, Debug)]
+pub struct GpuImageContrastPath {
+    /// Path in window coordinates.
+    pub path: Path<Pixels>,
+    /// Opacity applied to this path's antialiased coverage.
+    pub opacity: f32,
 }
 
 /// An application texture created from GPUI's shared graphics device.

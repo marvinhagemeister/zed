@@ -473,6 +473,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 let first = self.gpu_image_sprites_iter.peek().unwrap();
                 let image_id = first.image.id();
                 let sampling = first.sampling;
+                let has_contrast_paths = !first.contrast_paths.is_empty();
                 let sprites_start = self.gpu_image_sprites_start;
                 let mut sprites_end = sprites_start + 1;
                 self.gpu_image_sprites_iter.next();
@@ -482,6 +483,8 @@ impl<'a> Iterator for BatchIterator<'a> {
                         (sprite.order, batch_kind) < max_order_and_kind
                             && sprite.image.id() == image_id
                             && sprite.sampling == sampling
+                            && !has_contrast_paths
+                            && sprite.contrast_paths.is_empty()
                     })
                     .is_some()
                 {
@@ -831,6 +834,10 @@ pub struct GpuImageSprite {
     pub sampling: GpuImageSampling,
     pub transformation: TransformationMatrix,
     pub image: Arc<GpuImage>,
+    /// Application-defined vector masks composited with per-pixel image contrast.
+    pub contrast_paths: Vec<Path<ScaledPixels>>,
+    /// Whether this sprite paints only its contrast paths rather than the sampled image.
+    pub contrast_paths_only: bool,
 }
 
 impl From<GpuImageSprite> for Primitive {

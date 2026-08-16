@@ -6,19 +6,19 @@ use crate::{
     Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuImage,
-    GpuImageSampling, GpuImageSprite, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
-    KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers,
-    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
-    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
-    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
-    SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
-    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
-    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point,
-    prelude::*, profiler, px, rems, size, transparent_black,
+    GpuImageContrastPath, GpuImageSampling, GpuImageSprite, GpuSpecs, Hsla, InputHandler, IsZero,
+    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
+    LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
+    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
+    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
+    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
+    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
+    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
+    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    point, prelude::*, profiler, px, rems, size, transparent_black,
 };
 
 use anyhow::{Context as _, Result, anyhow};
@@ -4690,6 +4690,58 @@ impl Window {
         sampling: GpuImageSampling,
         transformation: TransformationMatrix,
     ) -> Result<()> {
+        self.paint_gpu_image_primitive(
+            bounds,
+            source_bounds,
+            corner_radii,
+            image,
+            sampling,
+            transformation,
+            Vec::new(),
+            false,
+        )
+    }
+
+    /// Paints vector paths whose color contrasts independently with each sampled image pixel.
+    ///
+    /// The image itself is not painted. It is sampled only to choose black or white for each
+    /// path pixel, allowing this primitive to be placed after other presentation overlays.
+    pub fn paint_gpu_image_contrast_paths(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        source_bounds: Bounds<DevicePixels>,
+        corner_radii: Corners<Pixels>,
+        image: Arc<GpuImage>,
+        sampling: GpuImageSampling,
+        transformation: TransformationMatrix,
+        contrast_paths: Vec<GpuImageContrastPath>,
+    ) -> Result<()> {
+        if contrast_paths.is_empty() {
+            return Ok(());
+        }
+        self.paint_gpu_image_primitive(
+            bounds,
+            source_bounds,
+            corner_radii,
+            image,
+            sampling,
+            transformation,
+            contrast_paths,
+            true,
+        )
+    }
+
+    fn paint_gpu_image_primitive(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        source_bounds: Bounds<DevicePixels>,
+        corner_radii: Corners<Pixels>,
+        image: Arc<GpuImage>,
+        sampling: GpuImageSampling,
+        transformation: TransformationMatrix,
+        contrast_paths: Vec<GpuImageContrastPath>,
+        contrast_paths_only: bool,
+    ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
         let Some(context) = self.gpu_context() else {
@@ -4713,12 +4765,26 @@ impl Window {
             return Ok(());
         }
 
+        let scale_factor = self.scale_factor();
         let corner_radii = corner_radii
             .clamp_radii_for_quad_size(bounds.size)
-            .scale(self.scale_factor());
+            .scale(scale_factor);
         let bounds = self.snap_bounds(bounds);
         let content_mask = self.snapped_content_mask();
         let opacity = self.element_opacity();
+        let contrast_paths = contrast_paths
+            .into_iter()
+            .map(|mut contrast_path| {
+                contrast_path.path.content_mask = self.content_mask();
+                contrast_path.path.color = Background::from(Hsla {
+                    h: 0.0,
+                    s: 0.0,
+                    l: 1.0,
+                    a: contrast_path.opacity.clamp(0.0, 1.0) * opacity,
+                });
+                contrast_path.path.scale(scale_factor)
+            })
+            .collect();
         self.next_frame.scene.insert_primitive(GpuImageSprite {
             order: 0,
             bounds,
@@ -4729,6 +4795,8 @@ impl Window {
             sampling,
             transformation,
             image,
+            contrast_paths,
+            contrast_paths_only,
         });
         Ok(())
     }

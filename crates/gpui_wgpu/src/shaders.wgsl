@@ -95,6 +95,8 @@ struct GammaParams {
 @group(0) @binding(1) var<uniform> gamma_params: GammaParams;
 @group(2) @binding(0) var t_sprite: texture_2d<f32>;
 @group(2) @binding(1) var s_sprite: sampler;
+@group(3) @binding(0) var t_contrast_path: texture_2d<f32>;
+@group(3) @binding(1) var s_contrast_path: sampler;
 
 const M_PI_F: f32 = 3.1415926;
 const GRAYSCALE_FACTORS: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
@@ -1367,6 +1369,21 @@ fn fs_gpu_image(input: GpuImageVarying) -> @location(0) vec4<f32> {
     }
     if (color_encoding != 2u) {
         color = linear_to_srgba(color);
+    }
+
+    let has_contrast_path = ((sprite.flags >> 4u) & 1u) != 0u;
+    let contrast_path_only = ((sprite.flags >> 5u) & 1u) != 0u;
+    if (has_contrast_path) {
+        let path_uv = input.position.xy / globals.viewport_size;
+        let outline_coverage = textureSample(t_contrast_path, s_contrast_path, path_uv).a;
+        let display_luminance = dot(srgb_to_linear(color.rgb), GRAYSCALE_FACTORS);
+        let contrast_color = select(vec3<f32>(1.0), vec3<f32>(0.0), display_luminance > 0.179);
+        if (contrast_path_only) {
+            return blend_color(vec4<f32>(contrast_color, 1.0), coverage * outline_coverage);
+        }
+        color = vec4<f32>(mix(color.rgb, contrast_color, outline_coverage), color.a);
+    } else if (contrast_path_only) {
+        return vec4<f32>(0.0);
     }
     return blend_color(color, coverage);
 }
