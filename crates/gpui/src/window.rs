@@ -4843,7 +4843,6 @@ impl Window {
         cursor: GpuImageCursor,
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
-        let scale_factor = self.scale_factor();
         self.next_frame.scene.insert_primitive(GpuImageSprite {
             order: u32::MAX,
             bounds: self.snap_bounds(bounds),
@@ -4858,11 +4857,8 @@ impl Window {
             contrast_paths: Vec::new(),
             contrast_paths_only: true,
             cursor: Some(GpuImageCursor {
-                center: Point::new(
-                    cursor.center.x * scale_factor,
-                    cursor.center.y * scale_factor,
-                ),
-                radius: cursor.radius * scale_factor,
+                center: cursor.center,
+                radius: cursor.radius,
                 hardness: cursor.hardness,
             }),
         });
