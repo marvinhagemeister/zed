@@ -1383,10 +1383,20 @@ fn fs_gpu_image(input: GpuImageVarying) -> @location(0) vec4<f32> {
     if (has_cursor) {
         let cursor_distance = distance(input.local_position, sprite.cursor_center);
         let edge = max(0.5, fwidth(cursor_distance));
-        let outer = 1.0 - smoothstep(sprite.cursor_radius - edge, sprite.cursor_radius + edge, cursor_distance);
-        let inner = smoothstep(sprite.cursor_radius * sprite.cursor_hardness - edge,
-            sprite.cursor_radius * sprite.cursor_hardness + edge, cursor_distance);
-        let coverage = outer * inner;
+        let ring_width = max(1.0, edge * 2.0);
+        let outer = 1.0 - smoothstep(0.0, ring_width,
+            abs(cursor_distance - sprite.cursor_radius));
+        let inner_radius = sprite.cursor_radius * sprite.cursor_hardness;
+        let inner = select(0.0, 1.0 - smoothstep(0.0, ring_width,
+            abs(cursor_distance - inner_radius)), inner_radius > ring_width);
+        let crosshair = select(0.0, 1.0,
+            (abs(input.local_position.x - sprite.cursor_center.x) <= ring_width
+                && abs(input.local_position.y - sprite.cursor_center.y) <= 4.0
+                && cursor_distance <= sprite.cursor_radius)
+                || (abs(input.local_position.y - sprite.cursor_center.y) <= ring_width
+                    && abs(input.local_position.x - sprite.cursor_center.x) <= 4.0
+                    && cursor_distance <= sprite.cursor_radius));
+        let coverage = max(max(outer, inner * 0.4), crosshair * 0.75);
         let display_luminance = dot(srgb_to_linear(color.rgb), GRAYSCALE_FACTORS);
         let cursor_color = select(vec3<f32>(1.0), vec3<f32>(0.0), display_luminance > 0.179);
         return blend_color(vec4<f32>(cursor_color, 1.0), coverage);
