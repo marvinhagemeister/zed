@@ -4300,7 +4300,7 @@ impl Window {
         let element_opacity = self.element_opacity();
 
         self.next_frame.scene.insert_primitive(Underline {
-            order: u32::MAX,
+            order: 0,
             pad: 0,
             bounds,
             content_mask: self.snapped_content_mask(),
