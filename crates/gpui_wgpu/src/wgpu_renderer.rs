@@ -55,6 +55,8 @@ struct GlobalParams {
     pad: u32,
 }
 
+const PATH_INTERMEDIATE_SCALE: f32 = 0.5;
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct PodBounds {
@@ -1275,8 +1277,8 @@ impl WgpuRenderer {
         }
 
         let format = self.surface_config.format;
-        let width = self.surface_config.width;
-        let height = self.surface_config.height;
+        let width = ((self.surface_config.width as f32) * PATH_INTERMEDIATE_SCALE).ceil() as u32;
+        let height = ((self.surface_config.height as f32) * PATH_INTERMEDIATE_SCALE).ceil() as u32;
         let path_sample_count = self.rendering_params.path_sample_count;
         let resources = self.resources_mut();
 
@@ -1468,6 +1470,10 @@ impl WgpuRenderer {
         };
 
         let path_globals = GlobalParams {
+            viewport_size: [
+                self.surface_config.width as f32 * PATH_INTERMEDIATE_SCALE,
+                self.surface_config.height as f32 * PATH_INTERMEDIATE_SCALE,
+            ],
             premultiplied_alpha: 0,
             ..globals
         };
@@ -1930,10 +1936,22 @@ impl WgpuRenderer {
         for path in paths {
             let bounds = path.clipped_bounds();
             vertices.extend(path.vertices.iter().map(|v| PathRasterizationVertex {
-                xy_position: v.xy_position,
+                xy_position: Point::new(
+                    v.xy_position.x * PATH_INTERMEDIATE_SCALE,
+                    v.xy_position.y * PATH_INTERMEDIATE_SCALE,
+                ),
                 st_position: v.st_position,
                 color: path.color,
-                bounds,
+                bounds: Bounds::new(
+                    Point::new(
+                        bounds.origin.x * PATH_INTERMEDIATE_SCALE,
+                        bounds.origin.y * PATH_INTERMEDIATE_SCALE,
+                    ),
+                    Size::new(
+                        bounds.size.width * PATH_INTERMEDIATE_SCALE,
+                        bounds.size.height * PATH_INTERMEDIATE_SCALE,
+                    ),
+                ),
             }));
         }
 
@@ -1982,10 +2000,14 @@ impl WgpuRenderer {
             // entire surface before the image pass samples it.
             let surface_width = self.surface_config.width;
             let surface_height = self.surface_config.height;
-            let x = paint_bounds.origin.x.0.max(0.0) as u32;
-            let y = paint_bounds.origin.y.0.max(0.0) as u32;
-            let right = (paint_bounds.origin.x.0 + paint_bounds.size.width.0).max(0.0) as u32;
-            let bottom = (paint_bounds.origin.y.0 + paint_bounds.size.height.0).max(0.0) as u32;
+            let x = (paint_bounds.origin.x.0 * PATH_INTERMEDIATE_SCALE).max(0.0) as u32;
+            let y = (paint_bounds.origin.y.0 * PATH_INTERMEDIATE_SCALE).max(0.0) as u32;
+            let right = ((paint_bounds.origin.x.0 + paint_bounds.size.width.0)
+                * PATH_INTERMEDIATE_SCALE)
+                .max(0.0) as u32;
+            let bottom = ((paint_bounds.origin.y.0 + paint_bounds.size.height.0)
+                * PATH_INTERMEDIATE_SCALE)
+                .max(0.0) as u32;
             let x = x.min(surface_width);
             let y = y.min(surface_height);
             let right = right.min(surface_width);
