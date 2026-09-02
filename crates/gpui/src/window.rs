@@ -4300,7 +4300,7 @@ impl Window {
         let element_opacity = self.element_opacity();
 
         self.next_frame.scene.insert_primitive(Underline {
-            order: 0,
+            order: u32::MAX,
             pad: 0,
             bounds,
             content_mask: self.snapped_content_mask(),
@@ -4845,7 +4845,7 @@ impl Window {
         self.invalidator.debug_assert_paint();
         let scale_factor = self.scale_factor();
         self.next_frame.scene.insert_primitive(GpuImageSprite {
-            order: 0,
+            order: u32::MAX,
             bounds: self.snap_bounds(bounds),
             image_bounds: self.snap_bounds(image_bounds),
             content_mask: self.snapped_content_mask(),
