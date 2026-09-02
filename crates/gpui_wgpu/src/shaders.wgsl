@@ -1326,6 +1326,9 @@ struct GpuImageSprite {
     source_origin: vec2<i32>,
     source_size: vec2<i32>,
     transformation: TransformationMatrix,
+    cursor_center: vec2<f32>,
+    cursor_radius: f32,
+    cursor_hardness: f32,
 }
 
 struct GpuImageVarying {
@@ -1361,8 +1364,8 @@ fn fs_gpu_image(input: GpuImageVarying) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0);
     }
 
-    let distance = quad_sdf(input.local_position, sprite.bounds, sprite.corner_radii);
-    let coverage = sprite.opacity * saturate(0.5 - distance);
+    let quad_distance = quad_sdf(input.local_position, sprite.bounds, sprite.corner_radii);
+    let coverage = sprite.opacity * saturate(0.5 - quad_distance);
     let alpha_mode = sprite.flags & 3u;
     let color_encoding = (sprite.flags >> 2u) & 3u;
     if (alpha_mode == 2u && color.a > 0.0) {
@@ -1376,6 +1379,18 @@ fn fs_gpu_image(input: GpuImageVarying) -> @location(0) vec4<f32> {
 
     let has_contrast_path = ((sprite.flags >> 4u) & 1u) != 0u;
     let contrast_path_only = ((sprite.flags >> 5u) & 1u) != 0u;
+    let has_cursor = ((sprite.flags >> 6u) & 1u) != 0u;
+    if (has_cursor) {
+        let cursor_distance = distance(input.local_position, sprite.cursor_center);
+        let edge = max(0.5, fwidth(cursor_distance));
+        let outer = 1.0 - smoothstep(sprite.cursor_radius - edge, sprite.cursor_radius + edge, cursor_distance);
+        let inner = smoothstep(sprite.cursor_radius * sprite.cursor_hardness - edge,
+            sprite.cursor_radius * sprite.cursor_hardness + edge, cursor_distance);
+        let coverage = outer * inner;
+        let display_luminance = dot(srgb_to_linear(color.rgb), GRAYSCALE_FACTORS);
+        let cursor_color = select(vec3<f32>(1.0), vec3<f32>(0.0), display_luminance > 0.179);
+        return blend_color(vec4<f32>(cursor_color, 1.0), coverage);
+    }
     if (has_contrast_path) {
         let path_uv = input.position.xy / globals.viewport_size;
         let outline_coverage = textureSample(t_contrast_path, s_contrast_path, path_uv).a;

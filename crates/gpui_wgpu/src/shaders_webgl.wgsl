@@ -234,5 +234,8 @@ fn load_gpu_image_sprite(instance_id: u32) -> GpuImageSprite {
         read_vec2_i32(&cursor),
         read_vec2_i32(&cursor),
         read_transformation(&cursor),
+        read_vec2_f32(&cursor),
+        read_f32(&cursor),
+        read_f32(&cursor),
     );
 }

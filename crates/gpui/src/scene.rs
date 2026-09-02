@@ -841,6 +841,18 @@ pub struct GpuImageSprite {
     pub contrast_paths: Vec<Path<ScaledPixels>>,
     /// Whether this sprite paints only its contrast paths rather than the sampled image.
     pub contrast_paths_only: bool,
+    pub cursor: Option<GpuImageCursor>,
+}
+
+/// Parameters for an analytic GPU-rendered image cursor.
+#[derive(Clone, Copy, Debug)]
+pub struct GpuImageCursor {
+    /// Cursor center in scaled window coordinates.
+    pub center: Point<ScaledPixels>,
+    /// Outer cursor radius.
+    pub radius: ScaledPixels,
+    /// Fraction of the radius occupied by the hard inner edge.
+    pub hardness: f32,
 }
 
 impl From<GpuImageSprite> for Primitive {

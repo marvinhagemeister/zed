@@ -119,6 +119,9 @@ struct GpuImageSpriteInstance {
     source_origin: [i32; 2],
     source_size: [i32; 2],
     transformation: TransformationMatrix,
+    cursor_center: [f32; 2],
+    cursor_radius: f32,
+    cursor_hardness: f32,
 }
 
 fn webgl_shaders() -> String {
@@ -162,7 +165,8 @@ impl GpuImageSpriteInstance {
             flags: alpha
                 | color << 2
                 | u32::from(!sprite.contrast_paths.is_empty()) << 4
-                | u32::from(sprite.contrast_paths_only) << 5,
+                | u32::from(sprite.contrast_paths_only) << 5
+                | u32::from(sprite.cursor.is_some()) << 6,
             opacity: sprite.opacity,
             pad: 0,
             bounds: sprite.bounds,
@@ -178,6 +182,12 @@ impl GpuImageSpriteInstance {
                 sprite.source_bounds.size.height.0,
             ],
             transformation: sprite.transformation,
+            cursor_center: sprite
+                .cursor
+                .map(|c| [c.center.x.0, c.center.y.0])
+                .unwrap_or([0.0; 2]),
+            cursor_radius: sprite.cursor.map(|c| c.radius.0).unwrap_or(0.0),
+            cursor_hardness: sprite.cursor.map(|c| c.hardness).unwrap_or(0.0),
         }
     }
 }
@@ -2499,6 +2509,6 @@ mod tests {
         assert_eq!(std::mem::size_of::<MonochromeSprite>(), 28 * 4);
         assert_eq!(std::mem::size_of::<SubpixelSprite>(), 28 * 4);
         assert_eq!(std::mem::size_of::<PolychromeSprite>(), 24 * 4);
-        assert_eq!(std::mem::size_of::<GpuImageSpriteInstance>(), 30 * 4);
+        assert_eq!(std::mem::size_of::<GpuImageSpriteInstance>(), 34 * 4);
     }
 }
