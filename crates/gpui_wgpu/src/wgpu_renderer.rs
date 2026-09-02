@@ -1563,9 +1563,14 @@ impl WgpuRenderer {
                         }
 
                         drop(pass);
+                        let mut paint_bounds = paths[0].clipped_bounds();
+                        for path in paths.iter().skip(1) {
+                            paint_bounds = paint_bounds.union(&path.clipped_bounds());
+                        }
                         let rasterized = self.draw_paths_to_intermediate(
                             &mut encoder,
                             paths,
+                            paint_bounds,
                             &mut instance_offset,
                         )?;
 
@@ -1647,6 +1652,7 @@ impl WgpuRenderer {
                             let rasterized = self.draw_paths_to_intermediate(
                                 &mut encoder,
                                 &sprite.contrast_paths,
+                                sprite.bounds,
                                 &mut instance_offset,
                             )?;
                             pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1917,6 +1923,7 @@ impl WgpuRenderer {
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         paths: &[Path<ScaledPixels>],
+        paint_bounds: Bounds<ScaledPixels>,
         instance_offset: &mut u64,
     ) -> Result<bool> {
         let mut vertices = Vec::new();
@@ -1970,6 +1977,22 @@ impl WgpuRenderer {
             pass.set_pipeline(&resources.pipelines.path_rasterization);
             pass.set_bind_group(0, &resources.path_globals_bind_group, &[]);
             pass.set_bind_group(1, &vertex_binding.bind_group, &[]);
+            // Contrast paths are commonly tiny cursor overlays. Restrict the intermediate
+            // rasterization to their actual bounds so a cursor update does not shade the
+            // entire surface before the image pass samples it.
+            let surface_width = self.surface_config.width;
+            let surface_height = self.surface_config.height;
+            let x = paint_bounds.origin.x.0.max(0.0) as u32;
+            let y = paint_bounds.origin.y.0.max(0.0) as u32;
+            let right = (paint_bounds.origin.x.0 + paint_bounds.size.width.0).max(0.0) as u32;
+            let bottom = (paint_bounds.origin.y.0 + paint_bounds.size.height.0).max(0.0) as u32;
+            let x = x.min(surface_width);
+            let y = y.min(surface_height);
+            let right = right.min(surface_width);
+            let bottom = bottom.min(surface_height);
+            if right > x && bottom > y {
+                pass.set_scissor_rect(x, y, right - x, bottom - y);
+            }
             // The path rasterization shader loads records by vertex index
             // rather than instance index, so the allocation's base shifts the
             // vertex range here.
