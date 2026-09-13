@@ -55,7 +55,16 @@ struct GlobalParams {
     pad: u32,
 }
 
-const PATH_INTERMEDIATE_SCALE: f32 = 0.5;
+// Paths include thin curves, histogram peaks, and color-wheel wedges. Downsampling
+// this target blurs all of them when it is composited back onto the physical surface.
+const PATH_INTERMEDIATE_SCALE: f32 = 1.0;
+
+fn path_intermediate_size(surface_width: u32, surface_height: u32) -> (u32, u32) {
+    (
+        (surface_width as f32 * PATH_INTERMEDIATE_SCALE).ceil() as u32,
+        (surface_height as f32 * PATH_INTERMEDIATE_SCALE).ceil() as u32,
+    )
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -1287,8 +1296,8 @@ impl WgpuRenderer {
         }
 
         let format = self.surface_config.format;
-        let width = ((self.surface_config.width as f32) * PATH_INTERMEDIATE_SCALE).ceil() as u32;
-        let height = ((self.surface_config.height as f32) * PATH_INTERMEDIATE_SCALE).ceil() as u32;
+        let (width, height) =
+            path_intermediate_size(self.surface_config.width, self.surface_config.height);
         let path_sample_count = self.rendering_params.path_sample_count;
         let resources = self.resources_mut();
 
@@ -2471,6 +2480,18 @@ impl RenderingParameters {
 mod tests {
     use super::*;
     use gpui::{MonochromeSprite, PolychromeSprite, Quad, Shadow, SubpixelSprite, Underline};
+
+    #[test]
+    fn path_target_preserves_device_pixels_across_display_resizes() {
+        // Surface dimensions are already physical pixels: moving from Retina to
+        // low DPI must not introduce another resolution reduction or upscale.
+        for (width, height) in [(2400, 1600), (1200, 800), (1201, 801), (2400, 1600)] {
+            let (target_width, target_height) = path_intermediate_size(width, height);
+            assert_eq!((target_width, target_height), (width, height));
+            let device_pixel_in_target = PATH_INTERMEDIATE_SCALE;
+            assert_eq!(device_pixel_in_target, 1.0);
+        }
+    }
 
     #[test]
     fn webgl_shader_is_valid_wgsl_without_storage_buffers() {
