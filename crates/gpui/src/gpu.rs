@@ -101,6 +101,7 @@ impl GpuContext {
         GpuTexture {
             epoch: self.epoch,
             texture: Arc::new(self.device.create_texture(descriptor)),
+            owner: None,
         }
     }
 
@@ -111,6 +112,20 @@ impl GpuContext {
         GpuTexture {
             epoch: self.epoch,
             texture,
+            owner: None,
+        }
+    }
+
+    /// Retains application ownership alongside an imported texture, including scene and GPU use.
+    pub fn retain_texture_with_owner<T: std::any::Any + Send + Sync>(
+        &self,
+        texture: Arc<wgpu::Texture>,
+        owner: Arc<T>,
+    ) -> GpuTexture {
+        GpuTexture {
+            epoch: self.epoch,
+            texture,
+            owner: Some(owner),
         }
     }
 }
@@ -176,10 +191,19 @@ pub struct GpuImageContrastPath {
 }
 
 /// An application texture created from GPUI's shared graphics device.
-#[derive(Debug)]
 pub struct GpuTexture {
     epoch: GpuDeviceEpoch,
     texture: Arc<wgpu::Texture>,
+    owner: Option<Arc<dyn std::any::Any + Send + Sync>>,
+}
+
+impl std::fmt::Debug for GpuTexture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GpuTexture")
+            .field("epoch", &self.epoch)
+            .field("texture", &self.texture)
+            .finish_non_exhaustive()
+    }
 }
 
 impl GpuTexture {
@@ -200,6 +224,7 @@ impl GpuTexture {
 /// creating application may retain another [`Arc`] to continue rendering into
 /// the texture before submitting a frame that references this image.
 pub struct GpuImage {
+    _owner: Option<Arc<dyn std::any::Any + Send + Sync>>,
     id: GpuImageId,
     epoch: GpuDeviceEpoch,
     texture: Arc<wgpu::Texture>,
@@ -224,6 +249,7 @@ impl GpuImage {
                 context.epoch.get(),
             );
         }
+        let owner = texture.owner;
         let texture = texture.texture;
         let extent = texture.size();
         if texture.dimension() != wgpu::TextureDimension::D2 || extent.depth_or_array_layers != 1 {
@@ -257,6 +283,7 @@ impl GpuImage {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         Ok(Arc::new(Self {
             id: GpuImageId(NEXT_GPU_IMAGE_ID.fetch_add(1, Ordering::Relaxed)),
+            _owner: owner,
             epoch: context.epoch(),
             texture,
             view,

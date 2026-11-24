@@ -1717,6 +1717,15 @@ impl WgpuRenderer {
         self.resources()
             .queue
             .submit(std::iter::once(encoder.finish()));
+        // Application allocation owners must outlive both the scene and its GPU work.
+        let images = scene
+            .gpu_image_sprites
+            .iter()
+            .map(|sprite| sprite.image.clone())
+            .collect::<Vec<_>>();
+        self.resources()
+            .queue
+            .on_submitted_work_done(move || drop(images));
         Ok(())
     }
 
